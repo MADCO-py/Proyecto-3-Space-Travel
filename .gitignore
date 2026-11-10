@@ -1,0 +1,7 @@
+zig-pkg/
+.zig-cache/
+zig-out/
+build/
+*.blend1
+*.blend2
+__pycache__/
