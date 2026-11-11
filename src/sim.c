@@ -7,7 +7,7 @@ const Body bodies[BODY_COUNT] = {
  {"PELAGOS", "02 / ARCHIVO OCEANICO", "Un oceano global bajo nubes de cobre.", 5.1f, 48, .079f, 1.5f, -.10f, {80,199,209,255}},
  {"VESPER", "03 / GIGANTE ANILLADO", "Tormentas de amoniaco y un anillo de hielo.", 7.3f, 77, .049f, 2.8f, .16f, {222,180,117,255}},
  {"NIVAL", "04 / MUNDO DE CRISTAL", "Grietas azules recorren un desierto congelado.", 4.3f, 109, .032f, 4.2f, -.12f, {150,201,245,255}},
- {"MYCEL", "05 / RESERVA BIOLUMINISCENTE", "Una red viva responde a la noche estelar.", 5.8f, 145, .021f, 5.5f, .09f, {159,228,131,255}}
+ {"OCULUS", "05 / OJO HUMANO", "Esclerotica, iris y pupila sobre una orbita.", 5.8f, 145, .021f, 5.5f, .09f, {190,160,115,255}}
 };
 Vector3 body_position(int i, double time) {
  const Body *b=&bodies[i]; float a=b->phase+(float)time*b->speed;

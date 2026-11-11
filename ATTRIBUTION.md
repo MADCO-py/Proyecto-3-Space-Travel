@@ -1,20 +1,19 @@
 # Procedencia y atribución
 
-El código de `src/`, `tests/`, los shaders, los scripts de `tools/`, el Makefile, la configuración de CI y la documentación fueron generados con asistencia de **OpenAI Codex**, por solicitud y con autorización del usuario, el 10 de noviembre de 2026. Los archivos de código incluyen comentarios de atribución. No se presentan como trabajo escrito íntegramente por el alumno.
+El código de `src/`, `tests/`, los scripts de `tools/`, el Makefile, el CI y la documentación se desarrollaron con asistencia de **OpenAI Codex**, por solicitud del usuario. Los archivos de código incluyen comentarios de atribución.
 
-El diseño y la geometría de **MANTA-07**, tanto `assets/manta.obj` como `assets/manta.blend`, se generaron mediante `tools/model_ship.py` con asistencia de Codex. El archivo Blender contiene una propiedad de atribución. **Su existencia no demuestra que el estudiante haya modelado personalmente la nave y no debe usarse para reclamar ese bono.**
+Las texturas se generan en CPU en `make_textures`, dentro de `src/main.c`. Cada textura es una imagen de 512 × 256 píxeles. Se calculan patrones con seno y coseno, se combinan paletas distintas y se guarda el resultado en el arreglo `textures`. No se descargaron imágenes para las superficies. `sample` consulta estos colores mediante coordenadas UV y `shade` aplica iluminación y efectos animados. El cielo y el HUD también se calculan en CPU.
 
-Las texturas de planetas y anillos, la textura de halo y el cielo estrellado se generan proceduralmente por código atribuido a Codex; no contienen imágenes descargadas.
+La geometría de **MANTA-07**, `assets/manta.obj` y `assets/manta.blend`, fue generada mediante `tools/model_ship.py` con asistencia de Codex. El archivo Blender contiene atribución y no acredita modelado personal del alumno.
 
-## Dependencias y referencias
+## Dependencias
 
-- **Raylib 5.5**, de Ramon Santamaria y colaboradores, licencia zlib/libpng. Descarga oficial: https://github.com/raysan5/raylib/tree/5.5. Su fuente y licencia se conservan en `zig-pkg/raylib-5.5/`, excluido de Git. Se utiliza su API, matemáticas, generación de esferas y rasterización OpenGL. El cargador OBJ de la nave es el incluido en `src/obj.c`, no el de Raylib.
-- Se consultó la [cabecera oficial de Raylib 5.5](https://github.com/raysan5/raylib/blob/5.5/src/raylib.h) y el [ejemplo oficial de iluminación](https://github.com/raysan5/raylib/blob/5.5/examples/shaders/shaders_basic_lighting.c) para comprobar convenciones de API, atributos y uniforms. El ejemplo no fue copiado al proyecto.
-- **DejaVu Sans**, fuente de interfaz distribuida con su licencia completa en `assets/fonts/LICENSE.txt`. No es una fuente creada por el alumno ni por Codex.
-- **Blender** se utilizó para construir el archivo `.blend` mediante el script atribuido. No es una dependencia necesaria para ejecutar la simulación.
+- **Raylib 5.5**, Ramon Santamaria y colaboradores, licencia zlib/libpng: https://github.com/raysan5/raylib/tree/5.5. Su código y licencia se mantienen en `zig-pkg/raylib-5.5/`, excluido de Git. La versión activa utiliza su ventana, entrada, tiempo y matemáticas; no sus funciones de dibujo, generación de mallas ni rasterización de la escena.
+- **OpenGL** presenta exclusivamente el framebuffer terminado por la CPU. No calcula los planetas, la nave, su iluminación ni el z-buffer de la escena.
+- **Blender** se usó para guardar el archivo `.blend` desde el script atribuido. No hace falta para ejecutar la simulación.
 
-La consigna advierte que el trabajo generado por LLM puede ser sancionado. La autorización del usuario no garantiza que el docente lo acepte. Esta entrega mantiene su procedencia visible.
+Se consultaron la cabecera y el ejemplo de iluminación oficiales de Raylib durante el desarrollo inicial. El ejemplo no fue copiado al proyecto. La versión GPU inicial fue sustituida; sus shaders, fuente externa y capturas obsoletas fueron retirados.
 
-## Revisión: renderer CPU
+La procedencia de la asistencia se mantiene visible. La aceptación académica y los puntos dependen del docente.
 
-La versión activa sustituyó el dibujo 3D de Raylib por rasterización CPU propia en `src/main.c`. El presentador OpenGL solo transfiere el framebuffer terminado. El loader OBJ tampoco crea mallas GPU. La fuente externa y los shaders GLSL de escena de la versión anterior fueron retirados; el HUD usa glifos bitmap definidos en el código atribuido.
+Oculus reemplaza únicamente al quinto planeta por un ojo humano procedural: esclerótica marfil, venas discretas, iris marrón con fibras radiales, pupila negra de dilatación suave y brillo corneal. Conserva órbita, colisión, LOD y rasterización CPU. Su textura y shader fueron desarrollados con asistencia de Codex.

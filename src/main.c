@@ -39,12 +39,34 @@ static const unsigned char glyphs[][5]={
 {126,17,17,17,126},{127,73,73,73,54},{62,65,65,65,34},{127,65,65,34,28},{127,73,73,73,65},{127,9,9,9,1},{62,65,73,73,122},{127,8,8,8,127},{65,65,127,65,65},{32,64,65,63,1},{127,8,20,34,65},{127,64,64,64,64},{127,2,12,2,127},{127,4,8,16,127},{62,65,65,65,62},{127,9,9,9,6},{62,65,81,33,94},{127,9,25,41,70},{38,73,73,73,50},{1,1,127,1,1},{63,64,64,64,63},{31,32,64,32,31},{63,64,56,64,63},{99,20,8,20,99},{7,8,112,8,7},{97,81,73,69,67},
 {62,81,73,69,62},{0,66,127,64,0},{98,81,73,73,70},{34,65,73,73,54},{24,20,18,127,16},{39,69,69,69,57},{62,73,73,73,50},{1,113,9,5,3},{54,73,73,73,54},{38,73,73,73,62}};
 static void text(int x,int y,const char *s,int scale,Color c){for(;*s;s++,x+=6*scale){int g=*s>='A'&&*s<='Z'?*s-'A':*s>='0'&&*s<='9'?26+*s-'0':-1;if(g>=0)for(int i=0;i<5;i++)for(int j=0;j<7;j++)if(glyphs[g][i]&(1<<j))rect(x+i*scale,y+j*scale,scale,scale,c);else{}else if(*s=='-')rect(x,y+3*scale,5*scale,scale,c);else if(*s=='.')rect(x,y+6*scale,scale,scale,c);else if(*s=='/')for(int j=0;j<7;j++)rect(x+(4-j*4/7)*scale,y+j*scale,scale,scale,c);}}
+// Generated with OpenAI Codex: anatomical eye texture, calculated once in CPU.
+// Front of the eye is local +Z. Brown iris fibers and sparse branching scleral vessels.
+static Vector3 eye_texture(float u,float v){
+ float x=sinf(v)*cosf(u), y=cosf(v), z=sinf(v)*sinf(u);
+ float radius=acosf(Clamp(z,-1,1))/.57f, a=atan2f(y,x);
+ Vector3 color={.91f,.89f,.85f};
+ if(radius<1){
+  float fibers=.5f+.23f*sinf(a*137+radius*13)+.17f*sinf(a*231-radius*27)+.10f*cosf(a*61+radius*54);
+  color=Vector3Lerp((Vector3){.13f,.072f,.027f},(Vector3){.48f,.32f,.13f},Clamp(fibers,0,1));
+  float collarette=expf(-powf((radius-.47f)/.08f,2));
+  color=Vector3Add(color,Vector3Scale((Vector3){.13f,.075f,.018f},collarette));
+  float limbus=Clamp((1-radius)/.095f,0,1);
+  color=Vector3Lerp((Vector3){.065f,.047f,.03f},color,limbus);
+ }else{
+  float vessel=fabsf(sinf(a*13+.38f*sinf(radius*8)+.16f*sinf(radius*21+a*3)));
+  float branch=fabsf(sinf(a*27-radius*3+.32f*sinf(radius*15)));
+  float strength=Clamp((radius-1.08f)*.7f,0,.45f);
+  float vein=expf(-vessel*vessel*2100)*strength+expf(-branch*branch*4200)*strength*.3f;
+  color=Vector3Lerp(color,(Vector3){.56f,.22f,.20f},Clamp(vein,0,.5f));
+ }
+ return color;
+}
 static void make_textures(void){for(int k=0;k<6;k++)for(int y=0;y<TEXH;y++)for(int x=0;x<TEXW;x++){
  float u=x/(float)TEXW*2*PI,v=y/(float)TEXH*PI;
  float n=sinf(u*7+sinf(v*11))*cosf(v*9+sinf(u*13));float f=.5f+.5f*n;
  Vector3 a,b;
  switch(k){case 0:a=(Vector3){.06,.04,.04};b=(Vector3){.5,.19,.07};break;case 1:a=(Vector3){.01,.08,.23};b=(Vector3){.08,.5,.38};f=Clamp((n-.2f)*2,0,1);break;case 2:a=(Vector3){.29,.13,.08};b=(Vector3){.88,.7,.39};f=.5f+.5f*sinf(v*42+sin(u*3));break;case 3:a=(Vector3){.17,.35,.6};b=(Vector3){.85,.93,.99};break;case 4:a=(Vector3){.13,.04,.22};b=(Vector3){.05,.35,.19};break;default:a=(Vector3){1,.25,.01};b=(Vector3){1,.85,.3};break;}
- Vector3 c=Vector3Lerp(a,b,f);for(int j=0;j<3;j++)textures[k][y][x][j]=(unsigned char)((j==0?c.x:j==1?c.y:c.z)*255);
+ Vector3 c=k==4?eye_texture(u,v):Vector3Lerp(a,b,f);for(int j=0;j<3;j++)textures[k][y][x][j]=(unsigned char)((j==0?c.x:j==1?c.y:c.z)*255);
 }}
 static Vector3 sample(int kind,Vector2 uv){int x=((int)floorf(uv.x*TEXW)%TEXW+TEXW)%TEXW;int y=(int)Clamp(uv.y*(TEXH-1),0,TEXH-1);unsigned char *p=textures[kind][y][x];return (Vector3){p[0]/255.f,p[1]/255.f,p[2]/255.f};}
 static Color shade(int kind,Vector3 p,Vector3 n,Vector2 uv){
@@ -54,7 +76,17 @@ static Color shade(int kind,Vector3 p,Vector3 n,Vector2 uv){
  if(kind==1){float cloud=Clamp((sinf(uv.x*31+t*.12f+sinf(uv.y*25))*sinf(uv.y*21)-.5f)*2,0,1);base=Vector3Lerp(base,(Vector3){.8,.9,.9},cloud*.8f);}
  if(kind==2)base=Vector3Scale(base,.86f+.14f*sinf(uv.y*120+sinf(uv.x*25+t*.3f)));
  if(kind==3){float ice=powf(1-fabsf(sinf(uv.x*92+sinf(uv.y*59))),16);emission=Vector3Scale((Vector3){.05,.3,.8},ice*.6f);}
- if(kind==4){float pulse=powf(fmaxf(0,sinf(uv.x*120+sinf(uv.y*44))*cosf(uv.y*95)),10);emission=Vector3Scale((Vector3){.2,1,.4},pulse*(1-lam)*(.8f+.4f*sinf(t*2+uv.x*20)));}
+ if(kind==4){
+  float angle=acosf(Clamp(sinf(uv.y*PI)*sinf(uv.x*2*PI),-1,1))/.57f;
+  // Subtle pupil response preserves the body's unique animated software shader.
+  float pupil=.32f+.025f*sinf(t*.65f);
+  float edge=Clamp((angle-pupil)/.018f,0,1);
+  base=Vector3Lerp((Vector3){.004f,.003f,.002f},base,edge);
+  Vector3 towardEye=Vector3Normalize(Vector3Subtract(view.pos,p));
+  Vector3 halfway=Vector3Normalize(Vector3Add(light,towardEye));
+  float gloss=powf(fmaxf(0,Vector3DotProduct(n,halfway)),90)*lam*(angle<1.05f?.85f:.2f);
+  emission=(Vector3){gloss,gloss,gloss};
+ }
  if(kind==5){intensity=1.3f+.15f*sinf(t+uv.x*80);}
  return rgb(Vector3Add(Vector3Scale(base,intensity),emission));
 }
@@ -83,7 +115,13 @@ static void make_spheres(void){int sizes[3]={48,24,12};for(int l=0;l<3;l++){int 
  for(int j=0;j<n;j++)for(int i=0;i<2*n;i++){Vertex a=sphere_vertex(i,j,n),b=sphere_vertex(i+1,j,n),c=sphere_vertex(i,j+1,n),d=sphere_vertex(i+1,j+1,n);g->v[k++]=a;g->v[k++]=b;g->v[k++]=c;g->v[k++]=b;g->v[k++]=d;g->v[k++]=c;}
 }}
 static void sphere(int kind,Vector3 center,float radius){int l=choose_lod(Vector3Distance(view.pos,center)-radius,radius);lods[l]++;Geometry *g=&globe[l];float angle=(float)simtime*.07f,co=cosf(angle),si=sinf(angle);
- for(int i=0;i<g->count;i+=3){Vertex v[3];for(int j=0;j<3;j++){v[j]=g->v[i+j];Vector3 p=v[j].p;p=(Vector3){p.x*co+p.z*si,p.y,-p.x*si+p.z*co};v[j].n=p;float r=radius;if(kind==3)r*=1+.012f*sinf(p.x*19+(float)simtime)*sinf(p.z*23);v[j].p=Vector3Add(center,Vector3Scale(p,r));}triangle(v[0],v[1],v[2],kind);}
+ for(int i=0;i<g->count;i+=3){Vertex v[3];for(int j=0;j<3;j++){v[j]=g->v[i+j];Vector3 p=v[j].p;if(kind==4){
+   Vector3 radial=Vector3Normalize((Vector3){center.x,0,center.z});
+   Vector3 tangent={-radial.z,0,radial.x};
+   Vector3 front=Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(radial,-.6f),Vector3Scale(tangent,.8f)),(Vector3){0,.25f,0}));
+   Vector3 right=Vector3Normalize(Vector3CrossProduct((Vector3){0,1,0},front)),up=Vector3CrossProduct(front,right);
+   p=Vector3Add(Vector3Scale(right,p.x),Vector3Add(Vector3Scale(up,p.y),Vector3Scale(front,p.z)));
+  }else p=(Vector3){p.x*co+p.z*si,p.y,-p.x*si+p.z*co};v[j].n=p;float r=radius;if(kind==3)r*=1+.012f*sinf(p.x*19+(float)simtime)*sinf(p.z*23);v[j].p=Vector3Add(center,Vector3Scale(p,r));}triangle(v[0],v[1],v[2],kind);}
 }
 static void skybox(void){for(int y=0;y<HEIGHT;y++)for(int x=0;x<WIDTH;x++){
  Vector3 d=Vector3Normalize(Vector3Add(view.forward,Vector3Add(Vector3Scale(view.right,(x-WIDTH*.5f)/480),Vector3Scale(view.up,(HEIGHT*.5f-y)/480))));
