@@ -14,3 +14,7 @@ Las texturas de planetas y anillos, la textura de halo y el cielo estrellado se 
 - **Blender** se utilizó para construir el archivo `.blend` mediante el script atribuido. No es una dependencia necesaria para ejecutar la simulación.
 
 La consigna advierte que el trabajo generado por LLM puede ser sancionado. La autorización del usuario no garantiza que el docente lo acepte. Esta entrega mantiene su procedencia visible.
+
+## Revisión: renderer CPU
+
+La versión activa sustituyó el dibujo 3D de Raylib por rasterización CPU propia en `src/main.c`. El presentador OpenGL solo transfiere el framebuffer terminado. El loader OBJ tampoco crea mallas GPU. La fuente externa y los shaders GLSL de escena de la versión anterior fueron retirados; el HUD usa glifos bitmap definidos en el código atribuido.

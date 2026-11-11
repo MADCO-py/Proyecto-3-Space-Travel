@@ -1,325 +1,142 @@
-/* Generated with OpenAI Codex, November 2026. See ATTRIBUTION.md.
-   This implementation intentionally uses Raylib 3D/OpenGL, as requested by the user.
-   It is NOT a software rasterizer. */
+/* Generated with OpenAI Codex. CPU rasterizer: no Raylib drawing functions.
+   Raylib handles only window, timing, input and vector types/math.
+   OpenGL only uploads/presents the completed CPU framebuffer. */
+#define GL_GLEXT_PROTOTYPES
+#include <GL/gl.h>
+#include <GL/glext.h>
+#define Font X11Font
+#include <X11/Xlib.h>
+#undef Font
 #include "raylib.h"
 #include "raymath.h"
-#include "rlgl.h"
 #include "sim.h"
 #include "obj.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define W 1440
-#define H 900
-#define TRAVEL_SECONDS 3.6f
-static const Color INK={9,17,27,235}, MUTED={126,151,163,255}, PAPER={226,237,232,255}, MINT={174,238,203,255};
-typedef struct { Shader program; int time,eye,kind; } Surface;
-typedef struct {
- Camera3D camera; Vector3 position,velocity; float yaw,pitch; double time; int selected;
- bool paused,help,orbits,travelling,mouse; float travel,collisionFlash; Vector3 departure,arrival;
- int lod[3],frames; float speed; bool smoke; const char *capture;
-} State;
-static Font font;
-static Surface surfaces[7];
-static Model spheres[3],sky,ship,ring;
-static Texture2D textures[6],ringTexture,glow;
-static Shader skyShader,ringShader;
-static int ringCenter;
-static int skyEye;
-static unsigned int rng=37097;
-static float random01(void){rng=rng*1664525u+1013904223u;return (float)(rng>>8)/16777216.0f;}
-static float wave(float u,float v){return sinf(u*37+sinf(v*21)*1.8f)*sinf(v*47+cosf(u*13));}
-static Texture2D planet_texture(int kind){
- const int width=768,height=384;Image image=GenImageColor(width,height,BLACK);Color *pixels=image.data;
- for(int y=0;y<height;y++)for(int x=0;x<width;x++){
-  float u=(float)x/width*2*PI,v=(float)y/height*PI,n=wave(u,v),grain=random01()*.045f;
-  Vector3 a={0},b={0};float f=0;
-  switch(kind){
-   case 0:a=(Vector3){.09,.065,.07};b=(Vector3){.46,.21,.11};f=Clamp(.45+n*.35f+grain,0,1);break;
-   case 1:a=(Vector3){.025,.13,.20};b=(Vector3){.14,.48,.42};f=Clamp((n-.05f)*2,0,1);break;
-   case 2:a=(Vector3){.35,.19,.15};b=(Vector3){.86,.69,.44};f=.5f+.38f*sinf(v*36+sin(u*3)*.8f)+grain;break;
-   case 3:a=(Vector3){.18,.35,.51};b=(Vector3){.77,.89,.93};f=Clamp(.65f+n*.3f+grain,0,1);break;
-   case 4:a=(Vector3){.09,.055,.17};b=(Vector3){.17,.36,.24};f=Clamp(.4f+n*.65f+grain,0,1);break;
-   default:a=(Vector3){.9,.23,.035};b=(Vector3){1,.78,.27};f=Clamp(.6f+n*.3f+grain,0,1);break;
-  }
-  Vector3 c=Vector3Lerp(a,b,f);pixels[y*width+x]=(Color){(unsigned char)(c.x*255),(unsigned char)(c.y*255),(unsigned char)(c.z*255),255};
- }
- Texture2D t=LoadTextureFromImage(image);UnloadImage(image);GenTextureMipmaps(&t);SetTextureFilter(t,TEXTURE_FILTER_TRILINEAR);SetTextureWrap(t,TEXTURE_WRAP_REPEAT);return t;
+#include <float.h>
+#include <time.h>
+#define WIDTH 800
+#define HEIGHT 500
+#define TEXW 512
+#define TEXH 256
+static unsigned char pixels[HEIGHT][WIDTH][4], textures[6][TEXH][TEXW][3];
+static float depth[HEIGHT][WIDTH];
+typedef struct {Vector3 p,n; Vector2 uv;} Vertex;
+typedef struct {Vertex *v; int count;} Geometry;
+typedef struct {Vector3 pos,forward,right,up;} View;
+static View view;
+static Geometry globe[3];static ObjData hull;
+static double simtime;
+static int culled,triangles,lods[3];
+static unsigned int noise(unsigned int n){n^=n>>16;n*=0x7feb352d;n^=n>>15;n*=0x846ca68b;n^=n>>16;return n;}
+static void pixel(int x,int y,Color c){if(x<0||y<0||x>=WIDTH||y>=HEIGHT)return;unsigned char *p=pixels[y][x];float a=c.a/255.f;p[0]=(unsigned char)(p[0]*(1-a)+c.r*a);p[1]=(unsigned char)(p[1]*(1-a)+c.g*a);p[2]=(unsigned char)(p[2]*(1-a)+c.b*a);p[3]=255;}
+static Color rgb(Vector3 c){return (Color){(unsigned char)(Clamp(c.x,0,1)*255),(unsigned char)(Clamp(c.y,0,1)*255),(unsigned char)(Clamp(c.z,0,1)*255),255};}
+static void rect(int x,int y,int w,int h,Color c){for(int j=y;j<y+h;j++)for(int i=x;i<x+w;i++)pixel(i,j,c);}
+// Original compact 5x7 bitmap alphabet. Every glyph is rasterized into our CPU buffer.
+static const unsigned char glyphs[][5]={
+{126,17,17,17,126},{127,73,73,73,54},{62,65,65,65,34},{127,65,65,34,28},{127,73,73,73,65},{127,9,9,9,1},{62,65,73,73,122},{127,8,8,8,127},{65,65,127,65,65},{32,64,65,63,1},{127,8,20,34,65},{127,64,64,64,64},{127,2,12,2,127},{127,4,8,16,127},{62,65,65,65,62},{127,9,9,9,6},{62,65,81,33,94},{127,9,25,41,70},{38,73,73,73,50},{1,1,127,1,1},{63,64,64,64,63},{31,32,64,32,31},{63,64,56,64,63},{99,20,8,20,99},{7,8,112,8,7},{97,81,73,69,67},
+{62,81,73,69,62},{0,66,127,64,0},{98,81,73,73,70},{34,65,73,73,54},{24,20,18,127,16},{39,69,69,69,57},{62,73,73,73,50},{1,113,9,5,3},{54,73,73,73,54},{38,73,73,73,62}};
+static void text(int x,int y,const char *s,int scale,Color c){for(;*s;s++,x+=6*scale){int g=*s>='A'&&*s<='Z'?*s-'A':*s>='0'&&*s<='9'?26+*s-'0':-1;if(g>=0)for(int i=0;i<5;i++)for(int j=0;j<7;j++)if(glyphs[g][i]&(1<<j))rect(x+i*scale,y+j*scale,scale,scale,c);else{}else if(*s=='-')rect(x,y+3*scale,5*scale,scale,c);else if(*s=='.')rect(x,y+6*scale,scale,scale,c);else if(*s=='/')for(int j=0;j<7;j++)rect(x+(4-j*4/7)*scale,y+j*scale,scale,scale,c);}}
+static void make_textures(void){for(int k=0;k<6;k++)for(int y=0;y<TEXH;y++)for(int x=0;x<TEXW;x++){
+ float u=x/(float)TEXW*2*PI,v=y/(float)TEXH*PI;
+ float n=sinf(u*7+sinf(v*11))*cosf(v*9+sinf(u*13));float f=.5f+.5f*n;
+ Vector3 a,b;
+ switch(k){case 0:a=(Vector3){.06,.04,.04};b=(Vector3){.5,.19,.07};break;case 1:a=(Vector3){.01,.08,.23};b=(Vector3){.08,.5,.38};f=Clamp((n-.2f)*2,0,1);break;case 2:a=(Vector3){.29,.13,.08};b=(Vector3){.88,.7,.39};f=.5f+.5f*sinf(v*42+sin(u*3));break;case 3:a=(Vector3){.17,.35,.6};b=(Vector3){.85,.93,.99};break;case 4:a=(Vector3){.13,.04,.22};b=(Vector3){.05,.35,.19};break;default:a=(Vector3){1,.25,.01};b=(Vector3){1,.85,.3};break;}
+ Vector3 c=Vector3Lerp(a,b,f);for(int j=0;j<3;j++)textures[k][y][x][j]=(unsigned char)((j==0?c.x:j==1?c.y:c.z)*255);
+}}
+static Vector3 sample(int kind,Vector2 uv){int x=((int)floorf(uv.x*TEXW)%TEXW+TEXW)%TEXW;int y=(int)Clamp(uv.y*(TEXH-1),0,TEXH-1);unsigned char *p=textures[kind][y][x];return (Vector3){p[0]/255.f,p[1]/255.f,p[2]/255.f};}
+static Color shade(int kind,Vector3 p,Vector3 n,Vector2 uv){
+ if(kind==6)return rgb(Vector3Scale((Vector3){.42,.65,.72},.35f+.65f*fmaxf(0,Vector3DotProduct(n,Vector3Normalize(Vector3Subtract(view.pos,p))))));
+ Vector3 base=sample(kind,uv),light=Vector3Normalize(Vector3Negate(p));float lam=fmaxf(0,Vector3DotProduct(n,light));float intensity=.07f+lam*1.2f/(1+.000009f*Vector3LengthSqr(p));Vector3 emission={0};float t=(float)simtime;
+ if(kind==0){float crack=powf(fmaxf(0,sinf(uv.x*95+sinf(uv.y*43)*3)*sinf(uv.y*78)),16);emission=Vector3Scale((Vector3){1,.18,.01},crack*(1.2f+.5f*sinf(t*2+uv.y*30)));}
+ if(kind==1){float cloud=Clamp((sinf(uv.x*31+t*.12f+sinf(uv.y*25))*sinf(uv.y*21)-.5f)*2,0,1);base=Vector3Lerp(base,(Vector3){.8,.9,.9},cloud*.8f);}
+ if(kind==2)base=Vector3Scale(base,.86f+.14f*sinf(uv.y*120+sinf(uv.x*25+t*.3f)));
+ if(kind==3){float ice=powf(1-fabsf(sinf(uv.x*92+sinf(uv.y*59))),16);emission=Vector3Scale((Vector3){.05,.3,.8},ice*.6f);}
+ if(kind==4){float pulse=powf(fmaxf(0,sinf(uv.x*120+sinf(uv.y*44))*cosf(uv.y*95)),10);emission=Vector3Scale((Vector3){.2,1,.4},pulse*(1-lam)*(.8f+.4f*sinf(t*2+uv.x*20)));}
+ if(kind==5){intensity=1.3f+.15f*sinf(t+uv.x*80);}
+ return rgb(Vector3Add(Vector3Scale(base,intensity),emission));
 }
-static Surface surface_load(int kind){
- char *source=LoadFileText("assets/shaders/world.fs");char *vs=LoadFileText("assets/shaders/world.vs");
- if(!source||!vs){fprintf(stderr,"Missing shaders. Run from the repository root.\n");exit(2);}
- char *body=strchr(source,'\n'); // Comments precede #version; locate version explicitly.
- char *version=strstr(source,"#version 330");if(!version)exit(2);body=strchr(version,'\n');
- size_t size=strlen(body)+96;char *fs=malloc(size);
- snprintf(fs,size,"#version 330\n#define BODY_KIND %d\n%s",kind,body+1);
- Surface s={0};s.program=LoadShaderFromMemory(vs,fs);free(fs);UnloadFileText(source);UnloadFileText(vs);
- if(s.program.id==rlGetShaderIdDefault()){fprintf(stderr,"Surface shader %d failed\n",kind);exit(2);}
- s.time=GetShaderLocation(s.program,"time");s.eye=GetShaderLocation(s.program,"eye");s.kind=GetShaderLocation(s.program,"kind");
- SetShaderValue(s.program,s.kind,&kind,SHADER_UNIFORM_INT);return s;
-}
-static Model make_ring(void){
- const int segments=192;Mesh mesh={0};mesh.vertexCount=segments*6;mesh.triangleCount=segments*2;
- mesh.vertices=MemAlloc((unsigned int)mesh.vertexCount*3*sizeof(float));mesh.normals=MemAlloc((unsigned int)mesh.vertexCount*3*sizeof(float));mesh.texcoords=MemAlloc((unsigned int)mesh.vertexCount*2*sizeof(float));
- int corner[6]={0,2,1,1,2,3};
- for(int i=0;i<segments;i++)for(int k=0;k<6;k++){
-  int c=corner[k],v=i*6+k;float a=(i+(c/2))*2*PI/segments,r=c%2?2.03f:1.36f;
-  mesh.vertices[v*3]=cosf(a)*r;mesh.vertices[v*3+1]=0;mesh.vertices[v*3+2]=sinf(a)*r;
-  mesh.normals[v*3]=0;mesh.normals[v*3+1]=1;mesh.normals[v*3+2]=0;
-  mesh.texcoords[v*2]=(float)(c%2);mesh.texcoords[v*2+1]=(float)(i+c/2)/segments;
- }
- UploadMesh(&mesh,false);return LoadModelFromMesh(mesh);
-}
-static void load_assets(void){
- font=LoadFontEx("assets/fonts/Interface.ttf",64,NULL,0);SetTextureFilter(font.texture,TEXTURE_FILTER_BILINEAR);
- for(int i=0;i<6;i++){textures[i]=planet_texture(i);surfaces[i]=surface_load(i);}
- surfaces[6]=surface_load(6);
- const int sizes[3]={80,36,14};for(int i=0;i<3;i++)spheres[i]=LoadModelFromMesh(GenMeshSphere(1,sizes[i],sizes[i]));
- sky=LoadModelFromMesh(GenMeshSphere(1,24,32));skyShader=LoadShader("assets/shaders/world.vs","assets/shaders/sky.fs");
- if(skyShader.id==rlGetShaderIdDefault()){fprintf(stderr,"Sky shader failed\n");exit(2);}
- skyEye=GetShaderLocation(skyShader,"eye");sky.materials[0].shader=skyShader;
- ObjData obj;if(!obj_read("assets/manta.obj",&obj)){fprintf(stderr,"Invalid/missing MANTA OBJ\n");exit(2);}ship=obj_model(&obj);
- TraceLog(LOG_INFO,"MANTA: %d polygons (%d quads, %d ngons) -> %d triangles",obj.polygons,obj.quads,obj.ngons,obj.triangles);obj_free(&obj);
- ship.materials[0].shader=surfaces[6].program;
- ring=make_ring();ringShader=LoadShader("assets/shaders/world.vs","assets/shaders/ring.fs");
- if(ringShader.id==rlGetShaderIdDefault()){fprintf(stderr,"Ring shader failed\n");exit(2);}
- ring.materials[0].shader=ringShader;ringCenter=GetShaderLocation(ringShader,"center");
- float radius=bodies[2].radius;SetShaderValue(ringShader,GetShaderLocation(ringShader,"radius"),&radius,SHADER_UNIFORM_FLOAT);
- Image im=GenImageColor(256,4,BLANK);Color *p=im.data;
- for(int y=0;y<4;y++)for(int x=0;x<256;x++){float t=x/255.f;float bands=.6f+.4f*sinf(t*170);float gap=(t>.38f&&t<.45f)?0:1;p[y*256+x]=(Color){200,177,136,(unsigned char)(160*bands*gap)};}
- ringTexture=LoadTextureFromImage(im);UnloadImage(im);ring.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture=ringTexture;
- im=GenImageColor(128,128,BLANK);p=im.data;
- for(int y=0;y<128;y++)for(int x=0;x<128;x++){float r=sqrtf((x-63.5f)*(x-63.5f)+(y-63.5f)*(y-63.5f))/63.5f;float a=powf(fmaxf(0,1-r),3);p[y*128+x]=(Color){255,140,55,(unsigned char)(a*220)};}
- glow=LoadTextureFromImage(im);UnloadImage(im);
-}
-static void unload_assets(void){
- for(int i=0;i<3;i++) { UnloadModel(spheres[i]); }
- UnloadModel(sky);UnloadModel(ship);UnloadModel(ring);
- for(int i=0;i<6;i++) { UnloadTexture(textures[i]); }
- UnloadTexture(ringTexture);UnloadTexture(glow);
- for(int i=0;i<7;i++) { UnloadShader(surfaces[i].program); }
- UnloadShader(skyShader);UnloadShader(ringShader);UnloadFont(font);
-}
-static Vector3 forward_of(const State *s){return (Vector3){sinf(s->yaw)*cosf(s->pitch),sinf(s->pitch),-cosf(s->yaw)*cosf(s->pitch)};}
-static void look_at(State *s,Vector3 target){Vector3 d=Vector3Normalize(Vector3Subtract(target,s->position));s->pitch=asinf(Clamp(d.y,-1,1));s->yaw=atan2f(d.x,-d.z);}
-static void sync_camera(State *s){s->camera.position=s->position;s->camera.target=Vector3Add(s->position,forward_of(s));s->camera.up=(Vector3){0,1,0};s->camera.fovy=55+(s->travelling?12*sinf(PI*s->travel):0);s->camera.projection=CAMERA_PERSPECTIVE;}
-static void start_travel(State *s){
- if(s->travelling)return;
- s->travelling=true;s->travel=0;s->departure=s->position;s->velocity=Vector3Zero();
- // Freeze orbital time for transit so the arrival point remains accurate even if pause is toggled.
- s->arrival=arrival_point(s->selected,s->time);
-}
-static void update(State *s,float dt){
- if(IsKeyPressed(KEY_H))s->help=!s->help;
- if(IsKeyPressed(KEY_O))s->orbits=!s->orbits;
- if(IsKeyPressed(KEY_P)&&!s->travelling)s->paused=!s->paused;
- if(IsKeyPressed(KEY_F11))ToggleFullscreen();
- if(!s->travelling)for(int i=0;i<BODY_COUNT;i++)if(IsKeyPressed(KEY_ONE+i))s->selected=i;
- if(IsKeyPressed(KEY_ENTER))start_travel(s);
- if(IsKeyPressed(KEY_HOME)&&!s->travelling){s->position=(Vector3){182,110,213};s->velocity=Vector3Zero();look_at(s,Vector3Zero());}
- if(IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)){DisableCursor();s->mouse=true;}
- if(IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)){EnableCursor();s->mouse=false;}
- double old=s->time;
- if(!s->paused&&!s->travelling)s->time+=dt;
- Vector3 wanted=s->position;
- if(s->travelling){
-  s->travel=fminf(1,s->travel+dt/TRAVEL_SECONDS);wanted=travel_point(s->departure,s->arrival,s->travel);
-  look_at(s,body_position(s->selected,s->time));
-  if(s->travel>=1){s->travelling=false;wanted=s->arrival;}
- }else{
-  if(s->mouse){Vector2 m=GetMouseDelta();s->yaw+=m.x*.0025f;s->pitch-=m.y*.0025f;}
-  s->yaw+=(IsKeyDown(KEY_RIGHT)-IsKeyDown(KEY_LEFT))*dt*1.2f;
-  s->pitch+=(IsKeyDown(KEY_UP)-IsKeyDown(KEY_DOWN))*dt*1.2f;s->pitch=Clamp(s->pitch,-1.48f,1.48f);
-  Vector3 f=forward_of(s),right=Vector3Normalize(Vector3CrossProduct(f,(Vector3){0,1,0}));
-  Vector3 input=Vector3Add(Vector3Scale(f,(float)(IsKeyDown(KEY_W)-IsKeyDown(KEY_S))),Vector3Scale(right,(float)(IsKeyDown(KEY_D)-IsKeyDown(KEY_A))));
-  input.y+=IsKeyDown(KEY_SPACE)-IsKeyDown(KEY_LEFT_CONTROL);
-  float speed=IsKeyDown(KEY_LEFT_SHIFT)?58:18;
-  Vector3 target=Vector3Scale(Vector3Normalize(input),speed);
-  s->velocity=Vector3Lerp(s->velocity,target,1-expf(-dt*5));wanted=Vector3Add(s->position,Vector3Scale(s->velocity,dt));
- }
- int blocked;s->position=safe_move(s->position,wanted,old,s->time,&blocked);
- if(blocked){s->collisionFlash=1;s->velocity=Vector3Zero();}
- s->collisionFlash=fmaxf(0,s->collisionFlash-dt*.8f);s->speed=Vector3Length(s->velocity);sync_camera(s);
-}
-static void draw_orbit(int i,double time){
- const Body *b=&bodies[i];Color col=ColorAlpha(b->color,.22f);
- for(int j=0;j<160;j++){
-  float a=j*2*PI/160,aa=(j+1)*2*PI/160;
-  Vector3 p={cosf(a)*b->orbit,sinf(a)*b->orbit*sinf(b->tilt),sinf(a)*b->orbit*cosf(b->tilt)};
-  Vector3 q={cosf(aa)*b->orbit,sinf(aa)*b->orbit*sinf(b->tilt),sinf(aa)*b->orbit*cosf(b->tilt)};
-  DrawLine3D(p,q,col);
- }
- (void)time;
-}
-static void sphere_draw(State *s,int kind,Vector3 position,float radius,float rotation){
- int lod=choose_lod(Vector3Distance(s->position,position)-radius,radius);s->lod[lod]++;
- Model *m=&spheres[lod];m->materials[0].shader=surfaces[kind].program;m->materials[0].maps[MATERIAL_MAP_DIFFUSE].texture=textures[kind];
- DrawModelEx(*m,position,(Vector3){0,1,0},rotation,(Vector3){radius,radius,radius},WHITE);
-}
-static void draw_world(State *s){
- float t=(float)s->time;
- for(int i=0;i<7;i++){SetShaderValue(surfaces[i].program,surfaces[i].time,&t,SHADER_UNIFORM_FLOAT);SetShaderValue(surfaces[i].program,surfaces[i].eye,&s->position,SHADER_UNIFORM_VEC3);}
- SetShaderValue(skyShader,skyEye,&s->position,SHADER_UNIFORM_VEC3);
- Vector3 center=body_position(2,s->time);SetShaderValue(ringShader,ringCenter,&center,SHADER_UNIFORM_VEC3);
- memset(s->lod,0,sizeof(s->lod));
- BeginMode3D(s->camera);
- rlDisableBackfaceCulling();rlDisableDepthMask();DrawModel(sky,s->position,500,WHITE);rlEnableDepthMask();rlEnableBackfaceCulling();
- // Billboard halo is additive, depth tested and does not populate the depth buffer.
- rlDisableDepthMask();BeginBlendMode(BLEND_ADDITIVE);DrawBillboard(s->camera,glow,Vector3Zero(),65,WHITE);EndBlendMode();rlEnableDepthMask();
- if(s->orbits)for(int i=0;i<BODY_COUNT;i++)draw_orbit(i,s->time);
- sphere_draw(s,5,Vector3Zero(),SUN_RADIUS,t*3);
- for(int i=0;i<BODY_COUNT;i++)sphere_draw(s,i,body_position(i,s->time),bodies[i].radius,t*(i%2?-5:7));
- // Tilted translucent ring; draw after opaque geometry. Both sides are intentionally visible.
- rlDisableBackfaceCulling();rlDisableDepthMask();
- DrawModelEx(ring,body_position(2,s->time),(Vector3){1,0,0},21,(Vector3){bodies[2].radius,bodies[2].radius,bodies[2].radius},WHITE);
- rlEnableDepthMask();rlEnableBackfaceCulling();
- // Camera-following survey ship. Its complete bounds fit inside HULL_RADIUS.
- Vector3 f=forward_of(s),right=Vector3Normalize(Vector3CrossProduct(f,(Vector3){0,1,0})),up=Vector3Normalize(Vector3CrossProduct(right,f));
- Vector3 sp=Vector3Add(s->position,Vector3Add(Vector3Scale(f,3),Vector3Scale(up,-.93f)));
- ship.transform=MatrixMultiply(MatrixRotateX(s->pitch),MatrixRotateY(-s->yaw));
- DrawModel(ship,sp,.30f,(Color){163,198,207,255});
- // Thrusters remain emissive on the night side.
- for(int j=-1;j<=1;j+=2){Vector3 engine=Vector3Add(sp,Vector3Add(Vector3Scale(right,j*.195f),Vector3Scale(f,-.53f)));
-  DrawSphereEx(engine,.065f+(s->travelling?.04f:0),8,8,(Color){100,239,222,255});
-  DrawLine3D(engine,Vector3Add(engine,Vector3Scale(f,-(.18f+s->speed*.012f))),MINT);
- }
- EndMode3D();
-}
-static void text(const char *str,float x,float y,float size,Color c){DrawTextEx(font,str,(Vector2){x,y},size,1,c);}
-static void right_text(const char *str,float x,float y,float size,Color c){Vector2 m=MeasureTextEx(font,str,size,1);text(str,x-m.x,y,size,c);}
-static void panel(float x,float y,float w,float h){DrawRectangleRec((Rectangle){x,y,w,h},INK);DrawRectangleLinesEx((Rectangle){x,y,w,h},1,(Color){54,76,85,180});}
-static Rectangle destination_rect(int i,int width){return (Rectangle){width-292.f,224.f+i*51,260,46};}
-static void ui_input(State *s){
- if(s->mouse||s->travelling)return;
- Vector2 m=GetMousePosition();
- if(IsMouseButtonPressed(MOUSE_BUTTON_LEFT)){
-  for(int i=0;i<BODY_COUNT;i++)if(CheckCollisionPointRec(m,destination_rect(i,GetScreenWidth())))s->selected=i;
-  if(CheckCollisionPointRec(m,(Rectangle){GetScreenWidth()-292.f,623,260,44}))start_travel(s);
+typedef struct {float x,y,z;Vertex v;} Projected;
+static Projected project(Vertex v){Vector3 d=Vector3Subtract(v.p,view.pos);float z=Vector3DotProduct(d,view.forward);return (Projected){WIDTH*.5f+Vector3DotProduct(d,view.right)*480/z,HEIGHT*.5f-Vector3DotProduct(d,view.up)*480/z,z,v};}
+static float edge(float ax,float ay,float bx,float by,float x,float y){return (x-ax)*(by-ay)-(y-ay)*(bx-ax);}
+static void triangle(Vertex a,Vertex b,Vertex c,int kind){
+ Vector3 normal=Vector3CrossProduct(Vector3Subtract(b.p,a.p),Vector3Subtract(c.p,a.p));
+ if(Vector3DotProduct(normal,Vector3Subtract(view.pos,a.p))<=0){culled++;return;}
+ Projected p=project(a),q=project(b),r=project(c);if(p.z<.1f||q.z<.1f||r.z<.1f)return;
+ float area=edge(p.x,p.y,q.x,q.y,r.x,r.y);if(fabsf(area)<.001f)return;
+ int minx=(int)Clamp(floorf(fminf(p.x,fminf(q.x,r.x))),0,WIDTH-1),maxx=(int)Clamp(ceilf(fmaxf(p.x,fmaxf(q.x,r.x))),0,WIDTH-1);
+ int miny=(int)Clamp(floorf(fminf(p.y,fminf(q.y,r.y))),0,HEIGHT-1),maxy=(int)Clamp(ceilf(fmaxf(p.y,fmaxf(q.y,r.y))),0,HEIGHT-1);triangles++;
+ for(int y=miny;y<=maxy;y++)for(int x=minx;x<=maxx;x++){
+  float w0=edge(q.x,q.y,r.x,r.y,x+.5f,y+.5f)/area,w1=edge(r.x,r.y,p.x,p.y,x+.5f,y+.5f)/area,w2=1-w0-w1;
+  if(w0<0||w1<0||w2<0)continue;
+  w0/=p.z;w1/=q.z;w2/=r.z;float z=1/(w0+w1+w2);if(z>=depth[y][x])continue;
+  w0*=z;w1*=z;w2*=z;Vector3 pos=Vector3Add(Vector3Add(Vector3Scale(a.p,w0),Vector3Scale(b.p,w1)),Vector3Scale(c.p,w2));
+  Vector3 n=Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(a.n,w0),Vector3Scale(b.n,w1)),Vector3Scale(c.n,w2)));
+  Vector2 uv={a.uv.x*w0+b.uv.x*w1+c.uv.x*w2,a.uv.y*w0+b.uv.y*w1+c.uv.y*w2};
+  Color color=shade(kind,pos,n,uv);pixel(x,y,color);depth[y][x]=z;
  }
 }
-static void draw_labels(State *s){
- for(int i=-1;i<BODY_COUNT;i++){
-  Vector3 p=i<0?Vector3Zero():body_position(i,s->time);float r=i<0?SUN_RADIUS:bodies[i].radius;
-  Vector3 d=Vector3Subtract(p,s->position);if(Vector3DotProduct(d,forward_of(s))<=0)continue;
-  if(Vector3Distance(s->position,p)<r*3)continue;
-  Vector2 v=GetWorldToScreen(Vector3Add(p,(Vector3){0,r+1.8f,0}),s->camera);
-  if(v.x<42||v.x>GetScreenWidth()-330||v.y<130||v.y>GetScreenHeight()-130)continue;
-  Color c=i<0?(Color){236,183,119,255}:bodies[i].color;
-  DrawCircleV((Vector2){v.x,v.y+22},2,c);DrawLineV((Vector2){v.x,v.y+22},(Vector2){v.x+12,v.y+9},ColorAlpha(c,.6f));
-  text(i<0?"SOL / HELIOS":bodies[i].name,v.x+17,v.y,13,c);
- }
+static Vertex sphere_vertex(int i,int j,int n){float u=i/(float)(2*n),v=j/(float)n,a=u*2*PI,b=v*PI;Vector3 p={sinf(b)*cosf(a),cosf(b),sinf(b)*sinf(a)};return (Vertex){p,p,{u,v}};}
+static void make_spheres(void){int sizes[3]={48,24,12};for(int l=0;l<3;l++){int n=sizes[l];Geometry *g=&globe[l];g->count=n*2*n*6;g->v=malloc((size_t)g->count*sizeof(Vertex));int k=0;
+ for(int j=0;j<n;j++)for(int i=0;i<2*n;i++){Vertex a=sphere_vertex(i,j,n),b=sphere_vertex(i+1,j,n),c=sphere_vertex(i,j+1,n),d=sphere_vertex(i+1,j+1,n);g->v[k++]=a;g->v[k++]=b;g->v[k++]=c;g->v[k++]=b;g->v[k++]=d;g->v[k++]=c;}
+}}
+static void sphere(int kind,Vector3 center,float radius){int l=choose_lod(Vector3Distance(view.pos,center)-radius,radius);lods[l]++;Geometry *g=&globe[l];float angle=(float)simtime*.07f,co=cosf(angle),si=sinf(angle);
+ for(int i=0;i<g->count;i+=3){Vertex v[3];for(int j=0;j<3;j++){v[j]=g->v[i+j];Vector3 p=v[j].p;p=(Vector3){p.x*co+p.z*si,p.y,-p.x*si+p.z*co};v[j].n=p;float r=radius;if(kind==3)r*=1+.012f*sinf(p.x*19+(float)simtime)*sinf(p.z*23);v[j].p=Vector3Add(center,Vector3Scale(p,r));}triangle(v[0],v[1],v[2],kind);}
 }
-static void draw_map(State *s,int height){
- float x=48,y=height-235.f,size=142;panel(x-16,y-30,194,208);text("CARTA ORBITAL",x,y-17,11,MUTED);
- Vector2 center={x+size*.5f,y+size*.5f+10};
- for(int i=0;i<BODY_COUNT;i++){
-  float radius=bodies[i].orbit/145*67;DrawCircleLinesV(center,radius,(Color){39,59,69,255});
-  Vector3 p=body_position(i,s->time);Vector2 v={center.x+p.x/145*67,center.y+p.z/145*67};DrawCircleV(v,i==s->selected?4:2.5f,bodies[i].color);
- }
- DrawCircleV(center,4,(Color){255,186,96,255});
- Vector2 v={center.x+s->position.x/145*67,center.y+s->position.z/145*67};
- v.x=Clamp(v.x,x-2,x+size+2);v.y=Clamp(v.y,y+10,y+size+10);DrawCircleLinesV(v,4,MINT);
- text("TU NAVE",x,y+160,10,MINT);text("PLANO XZ",x+100,y+160,10,MUTED);
-}
-static void draw_ui(State *s){
- int w=GetScreenWidth(),h=GetScreenHeight();float rx=w-292.f;
- DrawRectangleGradientV(0,0,w,160,(Color){6,13,22,235},(Color){6,13,22,0});
- DrawRectangleGradientV(0,h-150,w,150,(Color){6,13,22,0},(Color){6,13,22,240});
- DrawRectangle(32,35,3,52,MINT);text("H E L I O G R A P H",48,28,30,PAPER);
- text("EXPEDICION 07   /   EL ARCHIVO DEL SILENCIO",49,69,11,MUTED);
- right_text("MANTA-07  /  TELEMETRIA EN VIVO",w-32,35,12,MINT);
- right_text(TextFormat("%02d FPS   |   LOD %d / %d / %d",GetFPS(),s->lod[0],s->lod[1],s->lod[2]),w-32,57,11,MUTED);
- DrawLine(32,102,w-32,102,(Color){54,76,85,190});
- text("SISTEMA HELIOS",48,128,13,MINT);text("05 MUNDOS  /  01 ESTRELLA",48,151,11,MUTED);
- draw_labels(s);
- panel(rx-16,126,292,559);
- text("NAVEGACION",rx,145,12,MUTED);text("Elige tu proximo mundo.",rx,173,18,PAPER);
- for(int i=0;i<BODY_COUNT;i++){
-  Rectangle r=destination_rect(i,w);bool chosen=i==s->selected;
-  if(chosen){DrawRectangleRec(r,(Color){31,56,59,230});DrawRectangle((int)r.x,(int)r.y,2,(int)r.height,bodies[i].color);}
-  else if(CheckCollisionPointRec(GetMousePosition(),r))DrawRectangleRec(r,(Color){24,37,48,210});
-  text(TextFormat("0%d",i+1),r.x+10,r.y+15,12,chosen?PAPER:MUTED);DrawCircle((int)r.x+52,(int)r.y+23,5,bodies[i].color);
-  text(bodies[i].name,r.x+69,r.y+13,16,chosen?PAPER:MUTED);
-  right_text(TextFormat("%.0f AU",bodies[i].orbit),r.x+r.width-10,r.y+16,10,MUTED);
- }
- const Body *b=&bodies[s->selected];
- DrawLine((int)rx,493,w-32,493,(Color){54,76,85,180});text(b->type,rx,512,11,b->color);
- // Fixed short lines maintain legibility at the minimum supported window width.
- const char *details[5][2]={{"Fracturas termicas.","La superficie nunca duerme."},{"Un oceano global.","Nubes sobre un archivo perdido."},{"Tormentas de amoniaco.","Un anillo de hielo a la deriva."},{"Un desierto congelado.","Su corteza de cristal respira."},{"Una red viva en la oscuridad.","La noche enciende sus esporas."}};
- text(details[s->selected][0],rx,540,13,PAPER);text(details[s->selected][1],rx,561,12,MUTED);
- float distance=Vector3Distance(s->position,body_position(s->selected,s->time))-b->radius;
- text(TextFormat("DISTANCIA   %.1f AU",distance),rx,592,11,MUTED);
- Rectangle button={rx,623,260,44};DrawRectangleRec(button,s->travelling?(Color){41,64,68,255}:MINT);
- text(s->travelling?"TRANSITO EN CURSO":"ENTER  /  INICIAR SALTO",rx+17,637,12,s->travelling?PAPER:INK);
- draw_map(s,h);
- // Minimal flight reticle and telemetry.
- float cx=w*.5f,cy=h*.50f;DrawLine((int)cx-7,(int)cy,(int)cx-2,(int)cy,ColorAlpha(MINT,.4f));DrawLine((int)cx+2,(int)cy,(int)cx+7,(int)cy,ColorAlpha(MINT,.4f));
- text(s->paused?"ORBITAS EN PAUSA":"VUELO LIBRE",252,h-127,11,MINT);
- text(TextFormat("%05.1f",s->speed),250,h-106,31,PAPER);text("AU / s",365,h-86,11,MUTED);
- text(TextFormat("X %+07.1f   Y %+07.1f   Z %+07.1f",s->position.x,s->position.y,s->position.z),252,h-59,11,MUTED);
- right_text("WASD MOVER   ESPACIO / CTRL ALTURA   SHIFT IMPULSO",w-32,h-59,11,MUTED);
- right_text("CLIC DERECHO MIRAR   1-5 DESTINO   H AYUDA",w-32,h-37,11,MUTED);
- if(s->collisionFlash>0){DrawRectangleLinesEx((Rectangle){3,3,w-6.f,h-6.f},3,ColorAlpha((Color){244,170,81,255},s->collisionFlash));text("PROXIMIDAD / CASCO PROTEGIDO",252,h-155,12,(Color){244,170,81,255});}
- if(s->travelling){
-  float a=sinf(PI*s->travel);BeginBlendMode(BLEND_ADDITIVE);
-  for(int i=0;i<65;i++){
-   float angle=i*2.399963f,r=90+fmodf(i*71+s->travel*670,650);Vector2 p={w*.5f+cosf(angle)*r,h*.5f+sinf(angle)*r};
-   Vector2 q={w*.5f+cosf(angle)*(r+35+100*a),h*.5f+sinf(angle)*(r+35+100*a)};DrawLineEx(p,q,1.2f,ColorAlpha(MINT,a*.6f));
-  }EndBlendMode();
-  panel(w*.5f-190,113,380,58);text("CORREDOR DE TRANSITO",w*.5f-165,123,13,MINT);
-  DrawRectangle((int)(w*.5f-165),149,330,3,(Color){40,65,72,255});DrawRectangle((int)(w*.5f-165),149,(int)(330*s->travel),3,MINT);
- }
- if(s->help){
-  float x=w*.5f-290,y=h*.5f-192;panel(x,y,580,384);text("PROTOCOLO DE EXPLORACION",x+28,y+27,21,MINT);
-  const char *lines[]={"W / A / S / D        Avanzar, retroceder y desplazarse","Espacio / Ctrl        Subir / bajar en el eje Y","Shift                      Impulso sostenido","Clic derecho            Mantener para mirar con el mouse","Flechas                   Mirar con el teclado","1-5 o clic                Seleccionar planeta","Enter                      Salto animado al planeta elegido","P / O                      Pausar orbitas / mostrar trayectorias","Home / F11             Vista general / pantalla completa","H / Esc                    Cerrar ayuda / salir"};
-  for(int i=0;i<10;i++)text(lines[i],x+28,y+77+i*25,13,i%2?MUTED:PAPER);
- }
-}
+static void skybox(void){for(int y=0;y<HEIGHT;y++)for(int x=0;x<WIDTH;x++){
+ Vector3 d=Vector3Normalize(Vector3Add(view.forward,Vector3Add(Vector3Scale(view.right,(x-WIDTH*.5f)/480),Vector3Scale(view.up,(HEIGHT*.5f-y)/480))));
+ int a=(int)floorf(atan2f(d.z,d.x)*1200),b=(int)floorf(asinf(d.y)*1200);unsigned int h=noise((unsigned int)a*73856093u^(unsigned int)b*19349663u);
+ Color c={5,10,19,255};if(h%1600<3)c=(Color){170+(h%70),175+(h%65),190+(h%50),255};pixel(x,y,c);depth[y][x]=FLT_MAX;
+}}
+static void line3(Vector3 a,Vector3 b,Color col){Vertex va={.p=a},vb={.p=b};Projected p=project(va),q=project(vb);if(p.z<.1f||q.z<.1f)return;float len=fmaxf(fabsf(q.x-p.x),fabsf(q.y-p.y));if(len>5000)return;for(int i=0;i<=(int)len;i++){float t=i/fmaxf(1,len);int x=(int)(p.x+(q.x-p.x)*t),y=(int)(p.y+(q.y-p.y)*t);float z=1/((1-t)/p.z+t/q.z);if(x>=0&&x<WIDTH&&y>=0&&y<HEIGHT&&z<depth[y][x])pixel(x,y,col);}}
+// CPU ray/plane intersections for a translucent ring, with depth testing against opaque geometry.
+static void rings(void){Vector3 c=body_position(2,simtime),n={0,.934f,.358f};float r=bodies[2].radius;
+ for(int y=0;y<HEIGHT;y++)for(int x=0;x<WIDTH;x++){
+ Vector3 d=Vector3Add(view.forward,Vector3Add(Vector3Scale(view.right,(x-WIDTH*.5f)/480),Vector3Scale(view.up,(HEIGHT*.5f-y)/480)));float den=Vector3DotProduct(d,n);if(fabsf(den)<.0001f)continue;float z=Vector3DotProduct(Vector3Subtract(c,view.pos),n)/den;if(z<.1f||z>=depth[y][x])continue;
+ Vector3 p=Vector3Add(view.pos,Vector3Scale(d,z));float radial=Vector3Distance(p,c)/r;if(radial<1.36f||radial>2.03f||(radial>1.61f&&radial<1.66f))continue;
+ float band=.5f+.5f*sinf(radial*230);Color col={190,166,120,(unsigned char)(100+90*band)};pixel(x,y,col);
+ }}
+static GLuint presenter(void){const char *vs="#version 330\nout vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=vec2(p.x,1.-p.y);gl_Position=vec4(p*2.-1.,0,1);}";const char *fs="#version 330\nin vec2 uv;uniform sampler2D frame;out vec4 color;void main(){color=texture(frame,uv);}";
+ GLuint v=glCreateShader(GL_VERTEX_SHADER),f=glCreateShader(GL_FRAGMENT_SHADER);glShaderSource(v,1,&vs,NULL);glCompileShader(v);glShaderSource(f,1,&fs,NULL);glCompileShader(f);GLuint p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);GLint ok;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){char log[1024];glGetProgramInfoLog(p,1024,NULL,log);fprintf(stderr,"Framebuffer presenter failed: %s\n",log);exit(2);}glDeleteShader(v);glDeleteShader(f);return p;}
+static void capture(const char *path){FILE *f=fopen(path,"wb");if(!f)return;fprintf(f,"P6\n%d %d\n255\n",WIDTH,HEIGHT);for(int y=0;y<HEIGHT;y++)for(int x=0;x<WIDTH;x++)fwrite(pixels[y][x],1,3,f);fclose(f);}
 int main(int argc,char **argv){
- State s={0};s.selected=1;s.orbits=true;s.position=(Vector3){182,110,213};s.capture=NULL;
- int limit=0;bool near=false,surface=false;
- for(int i=1;i<argc;i++){
-  if(strcmp(argv[i],"--smoke")==0){s.smoke=true;limit=240;}
-  else if(strcmp(argv[i],"--frames")==0&&i+1<argc)limit=atoi(argv[++i]);
-  else if(strcmp(argv[i],"--capture")==0&&i+1<argc)s.capture=argv[++i];
-  else if(strcmp(argv[i],"--near")==0)near=true;
-  else if(strcmp(argv[i],"--surface")==0){near=true;surface=true;s.paused=true;}
-  else if(strcmp(argv[i],"--body")==0&&i+1<argc)s.selected=Clamp((float)atoi(argv[++i]),0,BODY_COUNT-1);
+ bool headless=false,smoke=false,paused=false,orbits=true,help=false;int limit=0,selected=1;const char *output=NULL;bool near=false,check_display=false;
+ for(int i=1;i<argc;i++){if(!strcmp(argv[i],"--check-display"))check_display=true;else if(!strcmp(argv[i],"--headless"))headless=true;else if(!strcmp(argv[i],"--smoke")){smoke=true;limit=240;}else if(!strcmp(argv[i],"--frames")&&i+1<argc)limit=atoi(argv[++i]);else if(!strcmp(argv[i],"--capture")&&i+1<argc)output=argv[++i];else if(!strcmp(argv[i],"--near"))near=true;else if(!strcmp(argv[i],"--body")&&i+1<argc)selected=(int)Clamp(atoi(argv[++i]),0,4);}
+ if(headless&&!limit)limit=1;
+ // Check X authorization BEFORE InitWindow: Raylib 5.5 can dereference GLFW state on initialization failure.
+ if(!headless){Display *display=XOpenDisplay(NULL);if(!display){fprintf(stderr,"No se pudo abrir X11. Ejecuta desde una terminal de tu escritorio, sin sudo.\nComprueba DISPLAY y XAUTHORITY. Para pruebas sin escritorio: make headless.\n");return 1;}XCloseDisplay(display);if(check_display)return 0;InitWindow(1280,800,"HELIOGRAPH / CPU SOFTWARE RENDERER");if(!IsWindowReady())return 1;}
+ GLuint program=0,tex=0,vao=0;if(!headless){program=presenter();glGenVertexArrays(1,&vao);glBindVertexArray(vao);glGenTextures(1,&tex);glBindTexture(GL_TEXTURE_2D,tex);glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,WIDTH,HEIGHT,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);glDisable(GL_DEPTH_TEST);glDisable(GL_CULL_FACE);}
+ make_textures();make_spheres();if(!obj_read("assets/manta.obj",&hull)){fprintf(stderr,"No se pudo cargar assets/manta.obj. Ejecuta desde la raiz del proyecto.\n");return 2;}
+ view.pos=near?arrival_point(selected,0):(Vector3){182,110,213};Vector3 look=Vector3Normalize(Vector3Subtract(near?body_position(selected,0):Vector3Zero(),view.pos));float yaw=atan2f(look.x,-look.z),pitch=asinf(look.y),travel=-1;Vector3 departure={0},arrival={0};double prev=0;int frame=0;double total=0;
+ while((headless||!WindowShouldClose())&&(!limit||frame<limit)){
+  struct timespec begin,end;clock_gettime(CLOCK_MONOTONIC,&begin);double now=begin.tv_sec+begin.tv_nsec/1e9;float dt=smoke?1/60.f:(float)Clamp(prev?now-prev:1/60.,.001,.05);prev=now;
+  if(!headless){PollInputEvents();for(int i=0;i<5;i++)if(travel<0&&IsKeyPressed(KEY_ONE+i))selected=i;if(IsKeyPressed(KEY_P))paused=!paused;if(IsKeyPressed(KEY_O))orbits=!orbits;if(IsKeyPressed(KEY_H))help=!help;
+   if(IsMouseButtonDown(MOUSE_BUTTON_RIGHT)){Vector2 m=GetMouseDelta();yaw+=m.x*.003f;pitch-=m.y*.003f;}yaw+=(IsKeyDown(KEY_RIGHT)-IsKeyDown(KEY_LEFT))*dt;pitch=Clamp(pitch+(IsKeyDown(KEY_UP)-IsKeyDown(KEY_DOWN))*dt,-1.48f,1.48f);
+  }
+  if(travel<0&&((smoke&&frame==20)||(!headless&&IsKeyPressed(KEY_ENTER)))){travel=0;departure=view.pos;arrival=arrival_point(selected,simtime);}
+  view.forward=(Vector3){sinf(yaw)*cosf(pitch),sinf(pitch),-cosf(yaw)*cosf(pitch)};view.right=Vector3Normalize(Vector3CrossProduct(view.forward,(Vector3){0,1,0}));view.up=Vector3CrossProduct(view.right,view.forward);
+  Vector3 wanted=view.pos;double old=simtime;
+  if(travel>=0){travel=fminf(1,travel+dt/3.6f);wanted=travel_point(departure,arrival,travel);look=Vector3Normalize(Vector3Subtract(body_position(selected,simtime),wanted));yaw=atan2f(look.x,-look.z);pitch=asinf(look.y);if(travel>=1)travel=-1;}
+  else{if(!paused)simtime+=dt;if(!headless){Vector3 direction=Vector3Add(Vector3Scale(view.forward,IsKeyDown(KEY_W)-IsKeyDown(KEY_S)),Vector3Scale(view.right,IsKeyDown(KEY_D)-IsKeyDown(KEY_A)));direction.y+=IsKeyDown(KEY_SPACE)-IsKeyDown(KEY_LEFT_CONTROL);wanted=Vector3Add(view.pos,Vector3Scale(Vector3Normalize(direction),dt*(IsKeyDown(KEY_LEFT_SHIFT)?58:18)));}}
+  int blocked;view.pos=safe_move(view.pos,wanted,old,simtime,&blocked);
+  culled=triangles=0;memset(lods,0,sizeof(lods));skybox();sphere(5,Vector3Zero(),SUN_RADIUS);for(int i=0;i<5;i++)sphere(i,body_position(i,simtime),bodies[i].radius);rings();
+  if(orbits)for(int i=0;i<5;i++)for(int j=0;j<128;j++){Vector3 a=body_position(i,(j*2*PI/128-bodies[i].phase)/bodies[i].speed),b=body_position(i,((j+1)*2*PI/128-bodies[i].phase)/bodies[i].speed);Color c=bodies[i].color;c.a=65;line3(a,b,c);}
+  Vector3 anchor=Vector3Add(view.pos,Vector3Add(Vector3Scale(view.forward,3),Vector3Scale(view.up,-.95f)));
+  for(int i=0;i<hull.count;i+=3){Vertex v[3];Vector3 n=Vector3Normalize(Vector3CrossProduct(Vector3Subtract(hull.vertices[i+1],hull.vertices[i]),Vector3Subtract(hull.vertices[i+2],hull.vertices[i])));Vector3 normal=Vector3Add(Vector3Scale(view.right,n.x),Vector3Add(Vector3Scale(view.up,n.y),Vector3Scale(view.forward,-n.z)));
+   for(int j=0;j<3;j++){Vector3 p=hull.vertices[i+j];v[j]=(Vertex){Vector3Add(anchor,Vector3Scale(Vector3Add(Vector3Scale(view.right,p.x),Vector3Add(Vector3Scale(view.up,p.y),Vector3Scale(view.forward,-p.z))),.3f)),normal,{0,0}};}triangle(v[0],v[1],v[2],6);}
+  Color mint={174,238,203,255},white={226,237,232,255};rect(0,0,WIDTH,60,(Color){7,15,24,235});text(20,15,"HELIOGRAPH",3,white);text(22,44,"EXPEDICION 07 / RASTERIZACION CPU",1,mint);
+  rect(620,80,175,230,(Color){7,15,24,235});text(633,94,"NAVEGACION",1,mint);for(int i=0;i<5;i++){if(i==selected)rect(627,119+i*29,160,23,(Color){30,60,64,255});char line[48];snprintf(line,sizeof(line),"%d %s",i+1,bodies[i].name);text(635,127+i*29,line,1,bodies[i].color);}text(632,283,"ENTER / SALTAR",1,mint);
+  char stats[128];snprintf(stats,sizeof(stats),"TRI %d / CULL %d / LOD %d %d %d",triangles,culled,lods[0],lods[1],lods[2]);text(20,HEIGHT-42,stats,1,mint);text(20,HEIGHT-24,"WASD / ESPACIO CTRL / SHIFT / MOUSE DERECHO / H AYUDA",1,white);
+  if(blocked)text(240,70,"PROXIMIDAD / CASCO PROTEGIDO",1,(Color){255,160,70,255});
+  if(travel>=0){rect(200,72,360,22,(Color){7,15,24,235});text(212,78,"CORREDOR DE TRANSITO",1,mint);rect(200,98,(int)(360*travel),3,mint);for(int i=0;i<40;i++){float a=i*2.3999f,r=fmodf(i*31+travel*650,420);int x=400+cosf(a)*r,y=250+sinf(a)*r;for(int j=0;j<12;j++)pixel(x+(int)(cosf(a)*j),y+(int)(sinf(a)*j),(Color){130,230,210,180});}}
+  if(help){rect(105,100,490,260,(Color){7,15,24,250});const char *lines[]={"PROTOCOLO DE EXPLORACION","WASD - MOVER / ESPACIO CTRL - ALTURA","SHIFT - IMPULSO / FLECHAS - MIRAR","MANTENER MOUSE DERECHO - MIRAR","1 A 5 - SELECCIONAR / ENTER - VIAJAR","P - PAUSA / O - ORBITAS / H - AYUDA","ESC - SALIR"};for(int i=0;i<7;i++)text(125,120+i*29,lines[i],1,i?white:mint);}
+  if(!headless){glViewport(0,0,GetScreenWidth(),GetScreenHeight());glUseProgram(program);glBindVertexArray(vao);glBindTexture(GL_TEXTURE_2D,tex);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,WIDTH,HEIGHT,GL_RGBA,GL_UNSIGNED_BYTE,pixels);glDrawArrays(GL_TRIANGLES,0,3);SwapScreenBuffer();}
+  clock_gettime(CLOCK_MONOTONIC,&end);total+=(end.tv_sec-begin.tv_sec)+(end.tv_nsec-begin.tv_nsec)/1e9;frame++;
  }
- SetConfigFlags(FLAG_MSAA_4X_HINT|FLAG_WINDOW_RESIZABLE);
- InitWindow(W,H,"HELIOGRAPH / El archivo del silencio");
- if(!IsWindowReady()){fprintf(stderr,"Unable to open an OpenGL window. Check DISPLAY.\n");return 1;}
- SetWindowMinSize(1100,760);SetTargetFPS(60);SetExitKey(KEY_ESCAPE);
- load_assets();
- if(near){
-  s.position=arrival_point(s.selected,s.time);
-  if(surface){Vector3 c=body_position(s.selected,s.time);s.position=Vector3Add(c,Vector3Scale(Vector3Normalize(Vector3Subtract(s.position,c)),bodies[s.selected].radius+HULL_RADIUS+.5f));}
-  look_at(&s,body_position(s.selected,s.time));
- }else look_at(&s,Vector3Zero());
- sync_camera(&s);
- double total=0,maxFrame=0,warmTotal=0,warmMax=0;int warmFrames=0;
- double samples[600]={0};int sampleCount=0;
- while(!WindowShouldClose()&&(!limit||s.frames<limit)){
-  double begin=GetTime();float dt=fminf(GetFrameTime(),.05f);if(s.smoke)dt=1/60.f;
-  if(s.smoke){if(s.frames==20)start_travel(&s);if(s.frames==100)s.help=true;if(s.frames==110)s.help=false;}
-  ui_input(&s);
-  // Relative sweeps handle continuous motion. Clamp dt to bound orbital arc error.
-  update(&s,dt);
-  BeginDrawing();ClearBackground((Color){5,10,19,255});draw_world(&s);draw_ui(&s);EndDrawing();
-  double elapsed=GetTime()-begin;total+=elapsed;if(elapsed>maxFrame)maxFrame=elapsed;
-  if(s.frames>=30){warmTotal+=elapsed;if(elapsed>warmMax)warmMax=elapsed;warmFrames++;if(sampleCount<600)samples[sampleCount++]=elapsed;}
-  if(s.capture&&limit&&s.frames==limit-1){Image shot=LoadImageFromScreen();ExportImage(shot,s.capture);UnloadImage(shot);}
-  s.frames++;
- }
- TraceLog(LOG_INFO,"RUN: frames=%d average=%.2fms max=%.2fms collision_clearance=%.2f",s.frames,s.frames?total/s.frames*1000:0,maxFrame*1000,Vector3Distance(s.position,body_position(s.selected,s.time))-bodies[s.selected].radius);
- if(warmFrames){
-  for(int i=1;i<sampleCount;i++){double v=samples[i];int j=i-1;while(j>=0&&samples[j]>v){samples[j+1]=samples[j];j--;}samples[j+1]=v;}
-  TraceLog(LOG_INFO,"WARM: frames=%d average=%.2fms p95=%.2fms max=%.2fms",warmFrames,warmTotal/warmFrames*1000,samples[(sampleCount-1)*95/100]*1000,warmMax*1000);
- }
- int result=0;
- if(s.smoke && (s.travelling || Vector3Distance(s.position,s.arrival)>3)){fprintf(stderr,"SMOKE FAIL: transit did not finish at its destination\n");result=3;}
- else if(s.smoke)TraceLog(LOG_INFO,"SMOKE PASS: animated transit completed at destination");
- unload_assets();CloseWindow();return result;
+ if(output){capture(output);}
+ printf("CPU frames=%d mean=%.2fms triangles=%d culled=%d\n",frame,total/fmax(1,frame)*1000,triangles,culled);
+ for(int i=0;i<3;i++){free(globe[i].v);}
+ obj_free(&hull);if(!headless){glDeleteTextures(1,&tex);glDeleteVertexArrays(1,&vao);glDeleteProgram(program);CloseWindow();}return smoke&&(travel>=0||Vector3Distance(view.pos,arrival)>3)?3:0;
 }

@@ -6,5 +6,5 @@ typedef struct { Vector3 *vertices; int count, capacity, polygons, triangles, qu
 // Triangulates planar simple polygons (including concave n-gons) using ear clipping.
 int obj_read(const char *path, ObjData *out);
 void obj_free(ObjData *obj);
-Model obj_model(const ObjData *obj);
+
 #endif

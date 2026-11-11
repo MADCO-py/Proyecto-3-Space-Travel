@@ -60,10 +60,3 @@ int obj_read(const char *path,ObjData *o){
  fclose(f);free(positions);if(!ok||o->count==0){obj_free(o);return 0;}return 1;
 }
 void obj_free(ObjData *o){free(o->vertices);memset(o,0,sizeof(*o));}
-Model obj_model(const ObjData *o){
- Mesh mesh={0};mesh.vertexCount=o->count;mesh.triangleCount=o->count/3;
- mesh.vertices=MemAlloc((unsigned int)o->count*3*sizeof(float));mesh.normals=MemAlloc((unsigned int)o->count*3*sizeof(float));mesh.texcoords=MemAlloc((unsigned int)o->count*2*sizeof(float));
- for(int i=0;i<o->count;i+=3){Vector3 n=Vector3Normalize(Vector3CrossProduct(Vector3Subtract(o->vertices[i+1],o->vertices[i]),Vector3Subtract(o->vertices[i+2],o->vertices[i])));
-  for(int k=0;k<3;k++){int j=i+k;memcpy(mesh.vertices+j*3,&o->vertices[j],3*sizeof(float));memcpy(mesh.normals+j*3,&n,3*sizeof(float));mesh.texcoords[j*2]=mesh.texcoords[j*2+1]=0;}}
- UploadMesh(&mesh,false);return LoadModelFromMesh(mesh);
-}
